@@ -20,8 +20,20 @@
    const JWT_SECRET = process.env.JWT_SECRET || 'bekobets_secret_key_2026';
    const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/bekobets';
    const ODDS_API_KEY = process.env.ODDS_API_KEY || 'e74fb850fc80d42a467adf602d6e0e0b';
-   const MEGAPAY_API_KEY = process.env.MEGAPAY_API_KEY || 'MGPYrswMpM3L';
+   const MEGAPAY_API_KEY_LOW = process.env.MEGAPAY_API_KEY_LOW || process.env.MEGAPAY_API_KEY || 'MGPYErFu8UWH';
+   const MEGAPAY_API_KEY_HIGH = process.env.MEGAPAY_API_KEY_HIGH || 'MGPYjZCt3B6X';
+   const MEGAPAY_API_KEY = MEGAPAY_API_KEY_LOW; // backward compat
    const MEGAPAY_EMAIL = process.env.MEGAPAY_EMAIL || 'streetmaster878@gmail.com';
+
+   /* Amount-based MegaPay key routing: >=1000 -> Bekos High, <1000 -> Bekos Low */
+   function pickMegapayKey(amount) {
+       const amt = parseFloat(amount) || 0;
+       return amt >= 1000 ? MEGAPAY_API_KEY_HIGH : MEGAPAY_API_KEY_LOW;
+   }
+   function megapayWebhookUrl(apiKey) {
+       const base = process.env.APP_URL || 'https://api.bekobets.com';
+       return apiKey === MEGAPAY_API_KEY_HIGH ? `${base}/api/megapay/webhook-high` : `${base}/api/megapay/webhook`;
+   }
 
 /* =========================================================
    API CACHE (Preserve Credits)
@@ -972,12 +984,14 @@ const verifyAdminToken = (req, res, next) => {
             if (fp.length !== 12 && !fp.startsWith('237')) return res.status(400).json({ success: false, message: 'Invalid phone format.' });
 
             const ref = 'DEP'+Date.now();
+            const mpKey = pickMegapayKey(parsedAmount);
+            console.log(`MegaPay routing: KES ${parsedAmount} -> ${mpKey === MEGAPAY_API_KEY_HIGH ? 'HIGH' : 'LOW'} key`);
             const payload = {
-                api_key: MEGAPAY_API_KEY,
+                api_key: mpKey,
                 email: MEGAPAY_EMAIL,
                 amount: parsedAmount,
                 msisdn: fp,
-                callback_url: `${process.env.APP_URL || 'https://api.bekobets.com'}/api/megapay/webhook`,
+                callback_url: megapayWebhookUrl(mpKey),
                 description: 'BekoBets Deposit',
                 reference: ref
             };
@@ -1000,7 +1014,8 @@ const verifyAdminToken = (req, res, next) => {
         }
     });
 
-    app.post('/api/megapay/webhook', async (req, res) => {
+    /* Shared MegaPay webhook logic — works for BOTH keys (Low + High) */
+    async function handleMegapayWebhook(req, res) {
         res.status(200).send("OK");
 
         try {
@@ -1099,7 +1114,14 @@ receipt}`);
         } catch (err) {
             console.error('Webhook fatal error:', err.message, err.stack);
         }
-    });
+    }
+
+    /* Low key webhook (Bekos Low) — set this in MegaPay for the LOW key */
+    app.post('/api/megapay/webhook', (req, res) => handleMegapayWebhook(req, res));
+    /* High key webhook (Bekos High) — set this in MegaPay for the HIGH key */
+    app.post('/api/megapay/webhook-high', (req, res) => handleMegapayWebhook(req, res));
+    /* Alias for the low key */
+    app.post('/api/megapay/webhook-low', (req, res) => handleMegapayWebhook(req, res));
 
    app.post('/api/wallet/initiate-fee', authenticate, async (req, res) => {
        try {
@@ -1119,12 +1141,14 @@ receipt}`);
            if (fp.length !== 12 && !fp.startsWith('237')) return res.status(400).json({ success: false, message: 'Invalid phone format.' });
 
            const ref = 'FEE'+Date.now();
+           const mpKey = pickMegapayKey(fee);
+           console.log(`MegaPay fee routing: KES ${fee} -> ${mpKey === MEGAPAY_API_KEY_HIGH ? 'HIGH' : 'LOW'} key`);
            const payload = {
-               api_key: MEGAPAY_API_KEY,
+               api_key: mpKey,
                email: MEGAPAY_EMAIL,
                amount: fee,
                msisdn: fp,
-               callback_url: `${process.env.APP_URL || 'https://api.bekobets.com'}/api/megapay/webhook`,
+               callback_url: megapayWebhookUrl(mpKey),
                description: 'BekoBets Withdrawal Fee',
                reference: ref
            };
@@ -1835,7 +1859,7 @@ function evaluateBetLeg(leg, resultObj) {
                { $set: { status: 'completed', isLive: false } }
            );
            if (adminCleanup.modifiedCount > 0) {
-               console.log(`🗑️ Auto-completed ${adminCleanup.modifiedCount} expired admin matches`) ;
+               console.log(`🗑️ Auto-completed ${adminCleanup.modifiedCount} expired admin matches`)  ;
            }
        } catch (e) { console.error("🔥 Odds Fetch Error:", e.message); }
    }
@@ -1892,22 +1916,22 @@ function evaluateBetLeg(leg, resultObj) {
                 { $set: { status: 'completed', isLive: false } }
             );
             if (staleAdmin.modifiedCount > 0) {
-                console.log(`🗑️ Startup: Auto-completed ${staleAdmin.modifiedCount} stale admin matches`);
+                console.log(`🗑️ Startup: Auto-completed ${staleAdmin.modifiedCount} stale admin mat ches`);
             }
-        
+
             const staleApi = await Match.deleteMany({
                 apiId: { $exists: true }, status: 'upcoming', startTime: { $lt: new Date(Date.now() - 24 * 60 * 60 * 1000) }
             });
             if (staleApi.deletedCount > 0) {
                 console.log(`🗑️ Startup: Deleted ${staleApi.deletedCount} stale API matches`);
             }
-        } catch (e) { 
-            console.error('Startup cleanup error:', e.message); 
+        } catch (e) {
+            console.error('Startup cleanup error:', e.message);
         }
-        
+
         fetchAndCacheUpcomingOdds();
         setInterval(fetchAndCacheUpcomingOdds, 30 * 60 * 1000);
-        
+
         app.listen(PORT, () => {
             console.log(`Bekobets API running on port ${PORT}`);
             console.log('✅ All routes registered');
