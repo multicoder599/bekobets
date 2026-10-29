@@ -1522,15 +1522,17 @@ function evaluateBetLeg(leg, resultObj) {
            const match = await Match.findById(req.params.id);
            if (!match) return res.status(404).json({ error: "Match not found." });
 
-           /* FIX: If admin is setting a final result, ALWAYS mark completed immediately.
-              Bypass time checks — admin intent takes priority. */
-           if (isSettingFinalResult) {
+           /* FIX: Only auto-complete when the match has actually started.
+              Pre-match results are stored (and bets settle) but the match stays visible on the frontend. */
+           const now = new Date().getTime();
+           const start = new Date(match.startTime).getTime();
+           /* Complete ONLY if the match has started. A result set before kickoff
+              is kept (score/result saved, bets settled) but status stays upcoming. */
+           if (isSettingFinalResult && now >= start) {
                updateData.status = 'completed';
                updateData.isLive = false;
            } else {
-               /* For non-result updates (e.g. toggling live), use time-based logic */
-               const now = new Date().getTime();
-               const start = new Date(match.startTime).getTime();
+               /* Pre-match result or non-result update — time-based logic */
                const elapsed = now - start;
                const twoHours = 2*60*60*1000;
 
