@@ -1298,6 +1298,17 @@ receipt}`);
            const parsedStart = parseAsKenyanTime(md.startTime);
            if (!parsedStart || isNaN(parsedStart.getTime())) return res.status(400).json({ error: 'Invalid startTime. Use format: 2026-05-22T15:00 (Kenyan time)' });
 
+           /* FIX: Prevent duplicate injections of the same fixture (same teams + kickoff) */
+           const dup = await Match.findOne({ homeTeam: md.homeTeam, awayTeam: md.awayTeam, startTime: parsedStart });
+           if (dup) {
+               if (md.odds) dup.odds = md.odds;
+               if (md.oddsArr) dup.oddsArr = md.oddsArr;
+               if (md.league) dup.league = md.league;
+               if (md.featured !== undefined) dup.featured = md.featured;
+               await dup.save();
+               return res.status(200).json({ message: "Match already exists — updated existing one instead of duplicating.", match: dup });
+           }
+
            /* FIX: Admin matches default to featured=true so they appear in top games */
            const m = new Match({
                ...md,
