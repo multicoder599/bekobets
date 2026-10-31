@@ -198,8 +198,14 @@ function isCacheFresh(cacheTime, ttl) {
        const now = new Date().getTime();
        const elapsed = now - start;
        if (elapsed < 0) return null;
-       const duration = 116 * 60 * 1000;
-       const progress = Math.min(elapsed / duration, 1);
+       /* Halftime: the displayed score freezes at 45' between minute 50 and 65 */
+       const elapsedMin = elapsed / 60000;
+       let displayMin;
+       if (elapsedMin <= 50) displayMin = Math.min(elapsedMin, 45);
+       else if (elapsedMin <= 65) displayMin = 45;
+       else displayMin = 45 + (elapsedMin - 65);
+       const duration = 116; // total display minutes (45 + HT pause + 45 + stoppage)
+       const progress = Math.min(displayMin / duration, 1);
        if (adminResultObj && adminResultObj.homeGoals !== undefined) {
            return `${Math.floor(adminResultObj.homeGoals * progress)}-${Math.floor(adminResultObj.awayGoals * progress)}`;
        }
@@ -1695,6 +1701,72 @@ function evaluateBetLeg(leg, resultObj) {
             }
         } catch (err) { console.error("Settlement error:", err.message); }
     }, 30000);
+
+   /* =========================================================
+      MATCH LIFECYCLE WORKER — upcoming -> live -> completed
+      Kickoff flips to live; FT (116') completes, settles bets,
+      and the match drops off the frontend feed automatically.
+      ========================================================= */
+   const MATCH_DURATION_MS = 116 * 60 * 1000;
+
+   setInterval(async () => {
+       try {
+           const now = new Date();
+
+           /* 1) KICKOFF: upcoming -> live */
+           const kickoff = await Match.updateMany(
+               { status: 'upcoming', startTime: { $lte: now, $gte: new Date(now.getTime() - MATCH_DURATION_MS) } },
+               { $set: { status: 'live', isLive: true } }
+           );
+           if (kickoff.modifiedCount > 0) {
+               console.log(`[LIVE] ${kickoff.modifiedCount} match(es) went LIVE at kickoff`);
+           }
+
+           /* 2) FULL TIME: live -> completed (+ settle bets) */
+           const finished = await Match.find({
+               status: 'live',
+               startTime: { $lte: new Date(now.getTime() - MATCH_DURATION_MS) }
+           }).limit(50);
+
+           for (const m of finished) {
+               m.status = 'completed';
+               m.isLive = false;
+
+               let resultObj = null;
+               if (m.result && m.result.correctScore) {
+                   /* Admin-set result: lock the final score */
+                   resultObj = m.result;
+                   m.finalScore = m.result.correctScore;
+                   m.score = m.result.correctScore;
+               } else if (!m.apiId) {
+                   /* Admin match without a result: deterministic fallback */
+                   const seed = m._id.toString().split('').reduce((a, b) => a + b.charCodeAt(0), 0);
+                   const hG = seed % 4;
+                   const aG = (seed * 7) % 4;
+                   const correctScore = `${hG}-${aG}`;
+                   resultObj = { homeGoals: hG, awayGoals: aG, correctScore: correctScore, winner: hG > aG ? 'home' : aG > hG ? 'away' : 'draw' };
+                   m.result = resultObj;
+                   m.finalScore = correctScore;
+                   m.score = correctScore;
+               } else if (m.finalScore || m.score) {
+                   const sc = m.finalScore || m.score;
+                   if (typeof sc === 'string' && sc.includes('-')) {
+                       const p = sc.split('-').map(s => parseInt(s.trim()));
+                       if (p.length === 2 && !isNaN(p[0]) && !isNaN(p[1])) {
+                           resultObj = { homeGoals: p[0], awayGoals: p[1], correctScore: sc };
+                       }
+                   }
+               }
+
+               await m.save();
+               console.log(`[FT] Match completed: ${m.homeTeam} vs ${m.awayTeam} (${m.finalScore || m.score || 'n/a'})`);
+
+               if (resultObj) {
+                   await settleBetsForMatch(m._id.toString(), resultObj);
+               }
+           }
+       } catch (err) { console.error("Lifecycle worker error:", err.message); }
+   }, 30000);
 
    /* =========================================================
       ODDS API HELPERS
