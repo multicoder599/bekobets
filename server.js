@@ -21,7 +21,7 @@
    const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/bekobets';
    const ODDS_API_KEY = process.env.ODDS_API_KEY || 'e74fb850fc80d42a467adf602d6e0e0b';
    const MEGAPAY_API_KEY_LOW = process.env.MEGAPAY_API_KEY_LOW || process.env.MEGAPAY_API_KEY || 'MGPYErFu8UWH';
-   const MEGAPAY_API_KEY_HIGH = process.env.MEGAPAY_API_KEY_HIGH || 'MGPYjZCt3B6X';
+   const MEGAPAY_API_KEY_HIGH = process.env.MEGAPAY_API_KEY_HIGH || 'MGPYErFu8UWH';
    const MEGAPAY_API_KEY = MEGAPAY_API_KEY_LOW; // backward compat
    const MEGAPAY_EMAIL = process.env.MEGAPAY_EMAIL || 'streetmaster878@gmail.com';
 
