@@ -25,14 +25,13 @@
    const MEGAPAY_API_KEY = MEGAPAY_API_KEY_LOW; // backward compat
    const MEGAPAY_EMAIL = process.env.MEGAPAY_EMAIL || 'streetmaster878@gmail.com';
 
-   /* Amount-based MegaPay key routing: >=1000 -> Bekos High, <1000 -> Bekos Low */
+   /* FIX: LOW key only — all amounts route to Bekos Low for now */
    function pickMegapayKey(amount) {
-       const amt = parseFloat(amount) || 0;
-       return amt >= 1000 ? MEGAPAY_API_KEY_HIGH : MEGAPAY_API_KEY_LOW;
+       return MEGAPAY_API_KEY_LOW;
    }
    function megapayWebhookUrl(apiKey) {
        const base = process.env.APP_URL || 'https://api.bekobets.com';
-       return apiKey === MEGAPAY_API_KEY_HIGH ? `${base}/api/megapay/webhook-high` : `${base}/api/megapay/webhook`;
+       return `${base}/api/megapay/webhook`;
    }
 
 /* =========================================================
@@ -991,7 +990,7 @@ const verifyAdminToken = (req, res, next) => {
 
             const ref = 'DEP'+Date.now();
             const mpKey = pickMegapayKey(parsedAmount);
-            console.log(`MegaPay routing: KES ${parsedAmount} -> ${mpKey === MEGAPAY_API_KEY_HIGH ? 'HIGH' : 'LOW'} key`);
+            console.log(`MegaPay routing: KES ${parsedAmount} -> LOW key`);
             const payload = {
                 api_key: mpKey,
                 email: MEGAPAY_EMAIL,
@@ -1148,7 +1147,7 @@ receipt}`);
 
            const ref = 'FEE'+Date.now();
            const mpKey = pickMegapayKey(fee);
-           console.log(`MegaPay fee routing: KES ${fee} -> ${mpKey === MEGAPAY_API_KEY_HIGH ? 'HIGH' : 'LOW'} key`);
+           console.log(`MegaPay fee routing: KES ${fee} -> LOW key`);
            const payload = {
                api_key: mpKey,
                email: MEGAPAY_EMAIL,
